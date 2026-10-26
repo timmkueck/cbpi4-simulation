@@ -27,16 +27,18 @@ FUEHLER = {name: name for name in ("Kesseltemperatur", "Kesselvolumen", "Würze 
 FUEHLER["Kühlschrank Luft"] = "Kühlschrank"
 SUDNAME = "Sim-Sud"
 REZEPT_ID = "simulation-sud"  # Datei recipes/simulation-sud.yaml
-# Freie GPIOs des HAT: Simulierte Aktoren stoeren so keinen echten (SicherAktor prueft doppelte GPIOs)
+# GPIOs, die der HAT nicht belegt (Stand Biersteuerung f5a2bcf: belegt sind 2-4, 6, 9-11, 13, 16-22, 26, 27).
+# Simulierte Aktoren stoeren so keinen echten (SicherAktor prueft doppelte GPIOs). 15 (UART-RX) nur als
+# Durchfluss-Eingang, den die Simulation nie anfasst.
 AKTOREN = {  # Name -> (GPIO, Art)
     "Heizelement": (5, "Heizung"),
-    "Rührwerk": (6, "Rührwerk"),
-    "Kühlwasser": (7, "Sonstiges"),
-    "Kühlschrank": (8, "Sonstiges"),
-    "Spundventil": (9, "Sonstiges"),
-    "CO₂-Ventil": (10, "Sonstiges"),
+    "Rührwerk": (12, "Rührwerk"),
+    "Kühlwasser": (23, "Sonstiges"),
+    "Kühlschrank": (24, "Sonstiges"),
+    "Spundventil": (25, "Sonstiges"),
+    "CO₂-Ventil": (7, "Sonstiges"),
 }
-WASSERVENTIL = ("Wasserventil", 11, 12)  # Name, GPIO Ventil, GPIO Durchfluss
+WASSERVENTIL = ("Wasserventil", 8, 15)  # Name, GPIO Ventil, GPIO Durchfluss
 WASSER_L = 28
 # Maischplan in Simulationsminuten
 RASTEN = [("Maltoserast", 63, 60), ("Verzuckerungsrast", 72, 30), ("Abmaischen", 78, 10)]
@@ -253,6 +255,29 @@ def dashboard(t):
     return dict(elements=e, pathes=[])
 
 
+def aktoren_anlegen(cbpi, ids, sicher, dosierer):
+    """Legt die Aktoren an oder zieht ihre Einstellungen nach; gibt Name -> ID zurueck."""
+    neu = {}
+    for name, (gpio, art) in AKTOREN.items():
+        if sicher:
+            props = {"GPIO": gpio, "Aktiv bei": "HIGH", "Art": art, "Takt s": 5, "Simulation": "Ja"}
+            if art == "Heizung":
+                props.update({"Fühler": ids["Kesseltemperatur"], "Max Temperatur": 105, "Anstieg Minuten": 10,
+                              "Mindestanstieg K": 1, "Anstieg ab °C ignorieren": 95})
+            # aktualisieren: auch vorhandene simulierte Aktoren bekommen die aktuellen GPIOs
+            neu[name] = sicherstellen(cbpi, "actor", name, dict(type="SicherAktor", props=props), aktualisieren=True)
+        else:
+            neu[name] = sicherstellen(cbpi, "actor", name, dict(type="SimAktor", props={}))
+    name, gpio_v, gpio_f = WASSERVENTIL
+    if dosierer:
+        neu[name] = sicherstellen(cbpi, "actor", name, dict(type="VentilDosierer", props={
+            "GPIO Ventil": gpio_v, "GPIO Durchfluss": gpio_f, "Ventil offen bei": "HIGH", "Impulse pro Liter": 387,
+            "Max Liter": 40, "Simulation": "Ja"}), aktualisieren=True)
+    else:
+        neu[name] = sicherstellen(cbpi, "actor", name, dict(type="SimAktor", props={}))
+    return neu
+
+
 # --- Hauptteil ------------------------------------------------------------------
 
 def einrichten(url, zeitraffer_brauen=60.0, zeitraffer_gaerung=120.0, dashboard_nr=3, plaene=True, zentrale_id=None,
@@ -282,22 +307,14 @@ def einrichten(url, zeitraffer_brauen=60.0, zeitraffer_gaerung=120.0, dashboard_
         "Messgröße": groesse, "Max Alter s": 10})) for name, groesse in FUEHLER.items()}
 
     aus("Aktoren:")
-    for name, (gpio, art) in AKTOREN.items():
-        if sicher:
-            props = {"GPIO": gpio, "Aktiv bei": "HIGH", "Art": art, "Takt s": 5, "Simulation": "Ja"}
-            if art == "Heizung":
-                props.update({"Fühler": ids["Kesseltemperatur"], "Max Temperatur": 105, "Anstieg Minuten": 10,
-                              "Mindestanstieg K": 1, "Anstieg ab °C ignorieren": 95})
-            ids[name] = sicherstellen(cbpi, "actor", name, dict(type="SicherAktor", props=props))
-        else:
-            ids[name] = sicherstellen(cbpi, "actor", name, dict(type="SimAktor", props={}))
-    name, gpio_v, gpio_f = WASSERVENTIL
-    if dosierer:
-        ids[name] = sicherstellen(cbpi, "actor", name, dict(type="VentilDosierer", props={
-            "GPIO Ventil": gpio_v, "GPIO Durchfluss": gpio_f, "Ventil offen bei": "HIGH", "Impulse pro Liter": 387,
-            "Max Liter": 40, "Simulation": "Ja"}))
-    else:
-        ids[name] = sicherstellen(cbpi, "actor", name, dict(type="SimAktor", props={}))
+    ids.update(aktoren_anlegen(cbpi, ids, sicher, dosierer))
+    # Zweiter Durchgang: Beim Umstellen auf neue GPIOs kann ein Aktor kurz auf einer Nummer landen, die ein
+    # anderer noch belegt (SicherAktor/VentilDosierer melden dann "nicht bereit"). Jetzt stehen alle Ziele fest.
+    sprechen, aus = aus, (lambda *a: None)
+    try:
+        aktoren_anlegen(cbpi, ids, sicher, dosierer)
+    finally:
+        aus = sprechen
 
     aus("Kessel und Gärtank:")
     ids["kessel"] = sicherstellen(cbpi, "kettle", KESSEL, dict(

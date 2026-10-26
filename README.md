@@ -44,7 +44,8 @@ python3 stoerfaelle.py --url http://127.0.0.1:8000 --log ~/cbpi4/logs/cbpi.log
 
 **Sicherheit:** Die Simulation in einer **eigenen cbpi-Instanz** betreiben (eigener Konfigordner, nur an 127.0.0.1),
 nicht im cbpi, das die echte Brauerei steuert. Das Anlegen bricht ab, wenn es einen gleichnamigen *nicht*
-simulierten Aktor oder Fühler findet, und die simulierten Aktoren liegen auf freien GPIOs (5–12), damit
+simulierten Aktor oder Fühler findet, und die simulierten Aktoren liegen auf GPIOs, die der HAT nicht belegt
+(5, 7, 8, 12, 15, 23, 24, 25; Stand Platine Biersteuerung f5a2bcf), damit
 `SicherAktor` keinen doppelten GPIO meldet – trotzdem ersetzt „Simulation anlegen“ den Maischplan von cbpi.
 
 ## Was das Modell rechnet
