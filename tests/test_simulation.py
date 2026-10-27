@@ -571,3 +571,54 @@ def test_einrichtung_zeiten_und_gaerplan():
     assert E.echt_min(60, 60) == 1 and E.echt_min(10, 60) == 1 and E.echt_min(4 * 1440, 120) == 48
     plan = E.gaerplan({"Biertemperatur": "b"}, 120)
     assert [s[2]["TimerM"] for s in plan] == [48, 12, 24] and plan[2][2]["Temp"] == 2
+
+
+def ids_fuer_plan():
+    from cbpi4_simulation import einrichtung as E
+    ids = {name: f"a-{name}" for name in E.AKTOREN}
+    ids.update({"kessel": "k", "Kesseltemperatur": "s", "tank": "t",
+                "Wasserventil": "a-Wasserventil", "Kühlwasser": "a-Kühlwasser"})
+    return ids
+
+
+def test_ruehrwerk_laeuft_ueber_die_ganze_maische():
+    from cbpi4_simulation import einrichtung as E
+    plan = E.maischplan(ids_fuer_plan(), 60, mit_dosierer=True)
+    namen = [s[0] for s in plan]
+    ein, aus = namen.index("Rührwerk ein"), namen.index("Rührwerk aus")
+    # Einschalten vor dem ersten Heizschritt, Ausschalten nach der letzten Rast
+    assert ein < namen.index("Aufheizen zum Einmaischen")
+    assert aus == namen.index(E.RASTEN[-1][0]) + 1
+    # Alle Rasten liegen dazwischen
+    for name, _, _ in E.RASTEN:
+        assert ein < namen.index(name) < aus
+    schalter = {s[0]: s[2] for s in plan if s[1] == "ToggleStep"}
+    assert schalter["Rührwerk ein"] == {"toggle_type": "On", "Actor": "a-Rührwerk"}
+    assert schalter["Rührwerk aus"] == {"toggle_type": "Off", "Actor": "a-Rührwerk"}
+
+
+def test_dampfkondensator_ab_80_grad_bis_nach_dem_kochen():
+    from cbpi4_simulation import einrichtung as E
+    plan = E.maischplan(ids_fuer_plan(), 60, mit_dosierer=True)
+    namen = [s[0] for s in plan]
+    aufheizen = namen.index(f"Aufheizen auf {E.DAMPF_AB_C} °C")
+    ein, kochen, aus = (namen.index("Dampfkondensator ein"), namen.index("Kochen"),
+                        namen.index("Dampfkondensator aus"))
+    assert aufheizen + 1 == ein and ein + 1 == kochen and kochen + 1 == aus
+    # Der Aufheizschritt endet genau bei der Schwelle: Zieltemperatur, kein Timer
+    heizschritt = plan[aufheizen][2]
+    assert heizschritt["Temp"] == E.DAMPF_AB_C and heizschritt["Timer"] == 0
+    # Waehrend der Maische wird die Schwelle nie erreicht
+    assert max(temp for _, temp, _ in E.RASTEN) < E.DAMPF_AB_C
+    schalter = {s[0]: s[2] for s in plan if s[1] == "ToggleStep"}
+    assert schalter["Dampfkondensator ein"]["Actor"] == "a-Dampfkondensator"
+    assert schalter["Dampfkondensator aus"] == {"toggle_type": "Off", "Actor": "a-Dampfkondensator"}
+
+
+def test_simulierte_gpios_bleiben_frei_und_eindeutig():
+    from cbpi4_simulation import einrichtung as E
+    # Belegt am HAT (Biersteuerung, Zweig ventile-druck)
+    hat = {2, 3, 4, 6, 9, 10, 11, 13, 16, 17, 18, 19, 20, 21, 22, 26, 27}
+    belegt = [g for g, _ in E.AKTOREN.values()] + [E.WASSERVENTIL[1], E.WASSERVENTIL[2]]
+    assert not set(belegt) & hat, "simulierter Aktor liegt auf einem Pin des HAT"
+    assert len(set(belegt)) == len(belegt), "GPIO doppelt vergeben"

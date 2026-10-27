@@ -30,10 +30,13 @@ REZEPT_ID = "simulation-sud"  # Datei recipes/simulation-sud.yaml
 # GPIOs, die der HAT nicht belegt (Stand Biersteuerung f5a2bcf: belegt sind 2-4, 6, 9-11, 13, 16-22, 26, 27).
 # Simulierte Aktoren stoeren so keinen echten (SicherAktor prueft doppelte GPIOs). 15 (UART-RX) nur als
 # Durchfluss-Eingang, den die Simulation nie anfasst.
+# Achtung: Mit dem Dampfkondensator sind alle neun freien GPIOs vergeben. Ein weiterer simulierter
+# Aktor braucht erst einen frei gewordenen Pin.
 AKTOREN = {  # Name -> (GPIO, Art)
     "Heizelement": (5, "Heizung"),
     "Rührwerk": (12, "Rührwerk"),
-    "Kühlwasser": (23, "Sonstiges"),
+    "Kühlwasser": (23, "Sonstiges"),      # Kuehlspirale, am HAT Ventil 6 (J20, GPIO 10)
+    "Dampfkondensator": (14, "Sonstiges"),  # am HAT Ventil 7 (J20, GPIO 11)
     "Kühlschrank": (24, "Sonstiges"),
     "Spundventil": (25, "Sonstiges"),
     "CO₂-Ventil": (7, "Sonstiges"),
@@ -45,6 +48,10 @@ RASTEN = [("Maltoserast", 63, 60), ("Verzuckerungsrast", 72, 30), ("Abmaischen",
 EINMAISCHEN_C = 57
 KOCHEN_MIN = 60
 ANSTELLEN_C = 20
+# Das Ruehrwerk laeuft ueber die ganze Maische, der Dampfkondensator ab dieser Temperatur
+# bis zum Ende des Kochens. Beides schalten Schritte im Rezept (ToggleStep), nicht die
+# Kessellogik: cbpi 4.7.7 fasst den Ruehrwerksausgang eines Kessels nirgends selbst an.
+DAMPF_AB_C = 80
 # Gaerplan: Name, Temperatur, Druck bar, Tage
 GAERPLAN = [("Hauptgärung (spunden)", 18, 1.0, 4), ("Reifung", 19, 1.0, 1), ("Kaltcrash (nachdrücken)", 2, 1.0, 2)]
 
@@ -130,15 +137,27 @@ def maischplan(ids, faktor, mit_dosierer):
         s.append(("Wasser dosieren", "WasserDosieren", {"Liter": WASSER_L, "Ventil": ids["Wasserventil"]}))
     else:
         s.append(("Wasser einfüllen", "SimEreignis", {"Ereignis": "Wasser einfüllen", "Liter": WASSER_L}))
+    # Ruehrwerk an, bevor geheizt wird, und erst nach dem Abmaischen wieder aus.
+    # ToggleStep schaltet einmal und geht weiter; der Ausgang bleibt ueber alle
+    # dazwischenliegenden Schritte stehen.
+    s.append(("Rührwerk ein", "ToggleStep", {"toggle_type": "On", "Actor": ids["Rührwerk"]}))
     s.append(("Aufheizen zum Einmaischen", "MashStep", {"Temp": EINMAISCHEN_C, "Timer": 0, "Sensor": sensor,
                                                        "Kettle": k, "AutoMode": "Yes"}))
     s.append(("Einmaischen", "SimEreignis", {"Ereignis": "Einmaischen"}))
     for name, temp, minuten in RASTEN:
         s.append((name, "MashStep", {"Temp": temp, "Timer": echt_min(minuten, faktor), "Sensor": sensor,
                                      "Kettle": k, "AutoMode": "Yes"}))
+    s.append(("Rührwerk aus", "ToggleStep", {"toggle_type": "Off", "Actor": ids["Rührwerk"]}))
     s.append(("Treber ziehen", "SimEreignis", {"Ereignis": "Treber ziehen"}))
+    # Dampfkondensator ab DAMPF_AB_C: ein eigener Aufheizschritt ohne Timer endet genau
+    # dort, danach schaltet der ToggleStep. Waehrend der Maische wird die Schwelle nie
+    # erreicht (Abmaischen bei 78 Grad).
+    s.append((f"Aufheizen auf {DAMPF_AB_C} °C", "MashStep", {"Temp": DAMPF_AB_C, "Timer": 0, "Sensor": sensor,
+                                                             "Kettle": k, "AutoMode": "Yes"}))
+    s.append(("Dampfkondensator ein", "ToggleStep", {"toggle_type": "On", "Actor": ids["Dampfkondensator"]}))
     s.append(("Kochen", "BoilStep", {"Temp": 99, "Timer": echt_min(KOCHEN_MIN, faktor), "Sensor": sensor,
                                      "Kettle": k, "AutoMode": "Yes", "LidAlert": "No", "First_Wort": "No"}))
+    s.append(("Dampfkondensator aus", "ToggleStep", {"toggle_type": "Off", "Actor": ids["Dampfkondensator"]}))
     s.append(("Abkühlen", "CooldownStep", {"Temp": ANSTELLEN_C, "Sensor": sensor, "Actor": ids["Kühlwasser"],
                                            "Kettle": k}))
     s.append(("Anstellen", "SimEreignis", {"Ereignis": "Anstellen", "Gärtank": ids["tank"],

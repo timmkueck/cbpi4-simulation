@@ -24,7 +24,7 @@ Voraussetzung: das Plugin ist installiert (Abschnitt Einbau), cbpi neu gestartet
 1. **Hardware → Sensor → +**: Name `Brausimulation`, Typ **BrauSimulation**, speichern.
 2. In der Liste beim Fühler auf das **Augen-Symbol** (Bearbeiten), Parameter nach Wunsch ändern (Zeitraffer,
    Heizleistung, Volumen …), **„Beim Speichern anlegen“ = Ja**, speichern.
-   Angelegt werden 13 Fühler, 7 Aktoren (simuliert), „Sudkessel (Sim)“, „FermZilla (Sim)“, der Maischplan
+   Angelegt werden 13 Fühler, 8 Aktoren (simuliert), „Sudkessel (Sim)“, „FermZilla (Sim)“, der Maischplan
    „Sim-Sud“, der Gärplan und **Dashboard 3**. Danach steht die Einstellung wieder auf „Nein“.
 3. **Dashboard → oben rechts 3**. Brauen starten: **Brauen → ▶**. Der Tag läuft bis zum Kaltcrash von selbst durch;
    „Anstellen“ startet den Gärplan.
@@ -45,8 +45,32 @@ python3 stoerfaelle.py --url http://127.0.0.1:8000 --log ~/cbpi4/logs/cbpi.log
 **Sicherheit:** Die Simulation in einer **eigenen cbpi-Instanz** betreiben (eigener Konfigordner, nur an 127.0.0.1),
 nicht im cbpi, das die echte Brauerei steuert. Das Anlegen bricht ab, wenn es einen gleichnamigen *nicht*
 simulierten Aktor oder Fühler findet, und die simulierten Aktoren liegen auf GPIOs, die der HAT nicht belegt
-(5, 7, 8, 12, 15, 23, 24, 25; Stand Platine Biersteuerung f5a2bcf), damit
+(5, 7, 8, 12, 14, 15, 23, 24, 25; Stand Platine Biersteuerung f5a2bcf), damit
 `SicherAktor` keinen doppelten GPIO meldet – trotzdem ersetzt „Simulation anlegen“ den Maischplan von cbpi.
+Mit dem Dampfkondensator sind diese neun Pins **vollständig vergeben**: Ein weiterer simulierter Aktor braucht
+erst einen frei gewordenen.
+
+## Rührwerk und Dampfkondensator laufen über Rezeptschritte
+
+cbpi 4.7.7 schaltet den Rührwerksausgang eines Kessels **nirgends selbst** – weder die eingebaute `Hysteresis`
+noch `SicherHysterese` fassen `kettle.agitator` an. Beides steht deshalb als `ToggleStep` im Maischplan;
+`ToggleStep` schaltet einmal und geht weiter, der Ausgang bleibt über alle folgenden Schritte stehen.
+
+| Schritt | Wirkung |
+|---|---|
+| **Rührwerk ein** | vor „Aufheizen zum Einmaischen“, läuft über alle Rasten |
+| **Rührwerk aus** | direkt nach „Abmaischen“ |
+| **Aufheizen auf 80 °C** | `MashStep` ohne Timer: endet genau an der Schwelle (`DAMPF_AB_C`) |
+| **Dampfkondensator ein** | unmittelbar danach, also ab 80 °C |
+| **Dampfkondensator aus** | direkt nach „Kochen“ |
+
+Während der Maische wird die Schwelle nie erreicht (Abmaischen bei 78 °C), der Kondensator bleibt dort also aus.
+Gemessen im Durchlauf: Rührwerk 230 s durchgehend von „Rührwerk ein“ bis „Rührwerk aus“, Dampfkondensator ab
+80,6 °C (höchster Wert davor 78,6 °C) bis vor dem Abkühlen.
+
+**Wird der Brautag mitten in der Maische gestoppt, bleibt das Rührwerk an.** Der Wächter des `SicherAktor`
+schaltet nur ab, wenn cbpi hängt, nicht bei einem bewusst eingeschalteten Ausgang. Von Hand über den Knopf im
+Dashboard ausschalten.
 
 ## Was das Modell rechnet
 
