@@ -690,3 +690,55 @@ def _flaschendruck(w, gramm, raum_c=None):
         w.p.raum_c = raum_c
     w.z.g_flasche_g = float(gramm)
     return w.flaschendruck_bar()
+
+
+# --- Kessel leeren -----------------------------------------------------------------
+
+def test_kessel_leeren_raeumt_nur_den_kessel():
+    w = angestellt()                      # Gaerung laeuft, Kessel wurde benutzt
+    w.wasser_einfuellen(28)
+    w.einmaischen(5.5)
+    laufen(w, 60, Ausgaenge(heizung=1.0), dt=1.0)
+    assert w.z.k_vol_l > 0 and w.z.k_malz_kg > 0 and w.z.wasser_gesamt_l > 0
+    gaertank_vorher = (w.z.g_bier_l, w.z.g_temp, w.z.g_og_p, w.z.g_kopf_mol, w.z.g_tage)
+
+    w.kessel_leeren()
+
+    # Kessel leer und auf Raumtemperatur
+    assert (w.z.k_vol_l, w.z.k_malz_kg, w.z.k_extrakt_pot_kg, w.z.k_extrakt_kg) == (0.0, 0.0, 0.0, 0.0)
+    assert w.z.k_temp == w.p.raum_c and w.z.k_fuehler == w.p.raum_c
+    assert w.z.wasser_gesamt_l == 0.0
+    # Gaertank unveraendert
+    assert (w.z.g_bier_l, w.z.g_temp, w.z.g_og_p, w.z.g_kopf_mol, w.z.g_tage) == gaertank_vorher
+    assert w.z.angestellt is True
+
+
+def test_kessel_leeren_laesst_stoerfaelle_und_flasche_stehen():
+    w = M.Welt()
+    w.stoerung("heizung_klebt", True)
+    w.z.g_flasche_g = 800.0
+    w.wasser_einfuellen(20)
+    w.kessel_leeren()
+    assert w.z.stoerungen == ["heizung_klebt"]
+    assert w.z.g_flasche_g == 800.0
+    assert w.z.k_vol_l == 0.0
+
+
+def test_kessel_leeren_ist_kein_alles_zuruecksetzen():
+    w = angestellt()
+    w.wasser_einfuellen(28)
+    w.kessel_leeren()
+    assert w.z.g_bier_l > 0, "der Gärtank darf nicht mitgeleert werden"
+    w.zuruecksetzen()
+    assert w.z.g_bier_l == 0.0 and w.z.k_vol_l == 0.0
+
+
+def test_nach_dem_leeren_laesst_sich_wieder_brauen():
+    w = angestellt()
+    w.kessel_leeren()
+    w.wasser_einfuellen(28)
+    w.einmaischen(5.5)
+    laufen(w, 120, Ausgaenge(heizung=1.0), dt=1.0)
+    assert w.z.k_vol_l == pytest.approx(28, abs=0.1)
+    assert w.z.wasser_gesamt_l == pytest.approx(28, abs=0.1)
+    assert w.z.k_temp > w.p.leitungswasser_c

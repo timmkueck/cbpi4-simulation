@@ -29,8 +29,18 @@ Voraussetzung: das Plugin ist installiert (Abschnitt Einbau), cbpi neu gestartet
 3. **Dashboard → oben rechts 3**. Brauen starten: **Brauen → ▶**. Der Tag läuft bis zum Kaltcrash von selbst durch;
    „Anstellen“ startet den Gärplan.
 4. Alle weiteren Aktionen: im Dashboard der **Knopf ⋮ neben „Störfälle aktiv“** (Störfall auslösen/aufheben,
-   Störfälle prüfen, Ereignisse, Simulation neu anlegen, Alles zurücksetzen). Neben Kessel-, Bier-, Tankdruck- und
-   Vordruckwert öffnet ⋮ den Fühlerausfall dieses einen Fühlers.
+   Störfälle prüfen, Ereignisse, Simulation neu anlegen, Kessel leeren, Alles zurücksetzen). Neben Kessel-, Bier-,
+   Tankdruck- und Vordruckwert öffnet ⋮ den Fühlerausfall dieses einen Fühlers.
+
+### Noch einmal von vorn
+
+| Aktion | wirkt auf |
+|---|---|
+| **Kessel leeren (Gärtank bleibt)** | nur den Kessel: Inhalt, Malz und Extrakt auf 0, Kessel auf Raumtemperatur, **Wasserzähler auf 0**. Gärtank, Störfälle und CO₂-Flasche bleiben, wie sie sind |
+| **Anstellen (Würze in den Gärtank)** | schiebt die Würze aus dem Kessel in den Gärtank – der Kessel ist danach leer, der Gärtank voll |
+| **Alles zurücksetzen** | das ganze Modell: Kessel *und* Gärtank leer, Flasche voll, alle Störfälle weg |
+
+„Kessel leeren“ ist für den nächsten Versuch am Brautag, ohne die laufende Gärung wegzuwerfen.
 
 Parameter ändern wirkt sofort (beim nächsten Takt). Nach einer Änderung des Zeitraffers „Simulation anlegen“ erneut
 ausführen, damit die Zeiten im Maisch- und Gärplan passen.

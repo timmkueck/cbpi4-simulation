@@ -241,6 +241,23 @@ class Welt:
         z.k_malz_kg = 0.0
         z.k_extrakt_pot_kg = 0.0
 
+    def kessel_leeren(self):
+        """Nur den Kessel leeren -- Gaertank und Stoerfaelle bleiben, wie sie sind.
+
+        Fuer den naechsten Versuch am Brautag, ohne die laufende Gaerung
+        wegzuwerfen. Inhalt, Malz und Extrakt gehen auf null, der Kessel nimmt
+        Raumtemperatur an; der Wasserzaehler faengt wieder bei null an, weil er
+        zaehlt, was in diesen Sud gelaufen ist."""
+        z = self.z
+        z.k_vol_l = 0.0
+        z.k_malz_kg = 0.0
+        z.k_extrakt_pot_kg = 0.0
+        z.k_extrakt_kg = 0.0
+        z.k_temp = z.k_fuehler = self.p.raum_c
+        z.wasser_gesamt_l = 0.0
+        z.durchfluss_lpm = 0.0
+        z.heizleistung_w = 0.0
+
     def anstellen(self):
         """Wuerze vom Kessel in den Gaertank, Hefe dazu. Ohne Wuerze im Kessel
         (kein Brautag) mit den Vorgaben `wuerze_l` und `stammwuerze_p`."""

@@ -31,6 +31,9 @@ Braubrücke, Plugin `cbpi4-kellersensor`).
   fasst `kettle.agitator` nirgends selbst an. Rührwerk ein vor dem ersten Heizschritt, aus nach `RASTEN[-1]`;
   der Kondensator ab `DAMPF_AB_C` (eigener `MashStep` ohne Timer als Schwelle) bis nach dem Kochen. Wird der
   Brautag mitten in der Maische gestoppt, bleibt das Rührwerk an -- der Wächter greift nur, wenn cbpi hängt.
+- `kessel_leeren()` raeumt nur die Kesselfelder (Inhalt, Malz, Extrakt, Temperatur auf `raum_c`) und den
+  Wasserzaehler `wasser_gesamt_l`. Gaertank, Stoerfaelle und Flasche bleiben unberuehrt -- das unterscheidet
+  es von `zuruecksetzen()`. Neue Kesselfelder im `Zustand` dort mitnehmen.
 - Messgröße `CO₂-Flasche` liefert **bar**, nicht Gramm: den Dampfdruck von CO₂ (`co2_dampfdruck_bar`,
   Span/Wagner) als Überdruck, wie ihn das Manometer vor dem Druckminderer zeigt. Solange flüssiges CO₂ da ist,
   hängt er nur an der Temperatur, nicht am Füllstand; erst wenn alles verdampft ist, gilt das ideale Gas

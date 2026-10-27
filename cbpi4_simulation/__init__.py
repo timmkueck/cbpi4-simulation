@@ -331,6 +331,13 @@ class BrauSimulation(CBPiSensor):
         WELT.anstellen()
         melden(self.cbpi, anstell_text())
 
+    @action("Kessel leeren (Gärtank bleibt)", parameters=[])
+    async def kessel_leeren(self, **kwargs):
+        vorher = WELT.z.k_vol_l
+        WELT.kessel_leeren()
+        melden(self.cbpi, f"Kessel geleert ({vorher:.1f} L weg), Wasserzähler auf 0. "
+                          "Gärtank und Störfälle unverändert.", NotificationType.WARNING)
+
     @action("Alles zurücksetzen", parameters=[])
     async def zuruecksetzen(self, **kwargs):
         WELT.zuruecksetzen()
