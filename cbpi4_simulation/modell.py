@@ -21,6 +21,11 @@ M_CO2 = 44.01  # g/mol
 P_ATM = 1.013  # bar absolut
 KELVIN = 273.15
 LEITUNG_L = 0.05  # 8-mm-Leitung Gaspfosten -> T -> Ventile
+# CO2 am kritischen Punkt und Koeffizienten der Dampfdruckkurve (Span/Wagner 1996).
+# Ueber 31,0 C gibt es keine Fluessigkeit mehr, dort endet die Kurve.
+CO2_TK_K = 304.1282
+CO2_PK_BAR = 73.773
+CO2_DAMPF_A = (-7.0602087, 1.9391218, -1.6463597, -3.2995634)
 # Leitwerte der Ventile in mol/(s bar), Normliter: Magnetventil mit etwa 2,5 mm Bohrung
 SPUND_LEITWERT = 1.5 / 22.4
 CO2_LEITWERT = 1.0 / 22.4
@@ -57,12 +62,29 @@ MESSGROESSEN = {
     "Tankdruck": "bar",
     "CO₂-Vordruck": "bar",
     "Dichte": "SG",
-    "CO₂-Flasche": "g",
+    "CO₂-Flasche": "bar",
     "Gärtage": "d",
 }
 RAUSCHEN = {"Kesseltemperatur": 0.05, "Biertemperatur": 0.03, "Kühlschrank": 0.1, "Tankdruck": 0.003,
-            "CO₂-Vordruck": 0.005, "Dichte": 0.0002}
+            "CO₂-Vordruck": 0.005, "Dichte": 0.0002, "CO₂-Flasche": 0.05}
 NACHKOMMA = {"SG": 4, "bar": 3, "g": 0, "L": 2, "L/min": 2, "d": 2, "°C": 2}
+
+
+def co2_dampfdruck_bar(t_c):
+    """Dampfdruck von CO2 ueber der Fluessigkeit, absolut in bar.
+
+    Solange fluessiges CO2 in der Flasche ist, steht genau dieser Druck an --
+    unabhaengig davon, wie viel noch drin ist. Ueber dem kritischen Punkt
+    (31,0 C) gibt es keine Fluessigkeit mehr, dort gilt der kritische Druck."""
+    t_k = t_c + KELVIN
+    if t_k >= CO2_TK_K:
+        return CO2_PK_BAR
+    if t_k <= 0:
+        return 0.0
+    tau = 1.0 - t_k / CO2_TK_K
+    a1, a2, a3, a4 = CO2_DAMPF_A
+    s = a1 * tau + a2 * tau ** 1.5 + a3 * tau ** 2 + a4 * tau ** 4
+    return CO2_PK_BAR * math.exp(CO2_TK_K / t_k * s)
 
 
 @dataclass
@@ -90,6 +112,7 @@ class Parameter:
     gaertank_heizung_w: float = 40.0
     co2_vordruck_bar: float = 1.5  # Druckminderer
     co2_flasche_g: float = 2000.0
+    co2_flasche_l: float = 2.7  # Innenvolumen einer 2-kg-Flasche
     ueberdruckventil_bar: float = 2.4  # mechanisches PRV am Deckel
     rauschen: float = 1.0  # 0 = ohne Messrauschen
 
@@ -268,6 +291,23 @@ class Welt:
     def vordruck_bar(self):
         return self.p.co2_vordruck_bar if self.z.g_flasche_g > 0 else 0.0
 
+    def flaschendruck_bar(self):
+        """Was das Manometer vor dem Druckminderer zeigt (Ueberdruck in bar).
+
+        Solange fluessiges CO2 da ist, steht der Dampfdruck an. Der haengt nur
+        an der Temperatur, nicht an der Menge -- eine fast volle und eine fast
+        leere Flasche zeigen dasselbe. Erst wenn die letzte Fluessigkeit
+        verdampft ist, faellt der Druck mit der Restmenge (ideales Gas).
+        Der Geber ist also eine Warnung "gleich leer", keine Fuellstandsanzeige."""
+        mol = self.z.g_flasche_g / M_CO2
+        if mol <= 0:
+            return 0.0
+        t_c = self.p.raum_c
+        # Druck, wenn die ganze Menge gasfoermig waere. Liegt er ueber dem
+        # Dampfdruck, muss ein Teil fluessig sein -- dann gilt der Dampfdruck.
+        p_gas = mol * R * (t_c + KELVIN) / max(self.p.co2_flasche_l, 0.1)
+        return max(0.0, min(p_gas, co2_dampfdruck_bar(t_c)) - P_ATM)
+
     def ltg_mol_aus_kopf(self):
         """Beim Verstopfen behaelt die Leitung den Druck, den sie gerade hat."""
         z = self.z
@@ -309,7 +349,7 @@ class Welt:
             "Tankdruck": max(0.0, self.leitung_bar_abs() - P_ATM),
             "CO₂-Vordruck": self.vordruck_bar(),
             "Dichte": plato_zu_sg(self.bier_plato()) if z.angestellt else 1.0,
-            "CO₂-Flasche": z.g_flasche_g,
+            "CO₂-Flasche": self.flaschendruck_bar(),
             "Gärtage": z.g_tage,
         }[name]
         streuung = RAUSCHEN.get(name, 0.0) * self.p.rauschen

@@ -31,6 +31,10 @@ Braubrücke, Plugin `cbpi4-kellersensor`).
   fasst `kettle.agitator` nirgends selbst an. Rührwerk ein vor dem ersten Heizschritt, aus nach `RASTEN[-1]`;
   der Kondensator ab `DAMPF_AB_C` (eigener `MashStep` ohne Timer als Schwelle) bis nach dem Kochen. Wird der
   Brautag mitten in der Maische gestoppt, bleibt das Rührwerk an -- der Wächter greift nur, wenn cbpi hängt.
+- Messgröße `CO₂-Flasche` liefert **bar**, nicht Gramm: den Dampfdruck von CO₂ (`co2_dampfdruck_bar`,
+  Span/Wagner) als Überdruck, wie ihn das Manometer vor dem Druckminderer zeigt. Solange flüssiges CO₂ da ist,
+  hängt er nur an der Temperatur, nicht am Füllstand; erst wenn alles verdampft ist, gilt das ideale Gas
+  (`co2_flasche_l`). Der Inhalt in Gramm bleibt Zustand (`g_flasche_g`), wird aber nicht mehr gemessen.
 - Zeitraffer gilt für langsame Vorgänge (Wärme, Gärung, Lösen von CO₂), **Wasser und Gas laufen in Echtzeit**, weil
   die echten Plugins Durchfluss und Ventilpulse in Echtzeit messen. Folgen: Plan-Zeiten = Simulationszeit /
   Zeitraffer (ganze Minuten), GaerDruckLogik `Pause s` = 1, Kompressorpause skaliert.

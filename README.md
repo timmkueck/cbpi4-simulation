@@ -121,7 +121,7 @@ Minuten. Folgen, die „Simulation anlegen“ schon berücksichtigt:
 | Würze L / Stammwürze °P ohne Brautag | 23 / 12 | für „Anstellen“ mit leerem Kessel |
 | Vergärungsgrad %, Gärrate | 78 / 1 | Hauptgärung etwa 3 Tage bei 18 °C |
 | Kälteleistung W, Wärmeverlust Kühlschrank W/K, Heizung Gärtank W | 120 / 1,5 / 40 | |
-| CO₂-Vordruck bar, CO₂-Flasche g | 1,5 / 2000 | |
+| CO₂-Vordruck bar, CO₂-Flasche g, CO₂-Flasche L | 1,5 / 2000 / 2,7 | Inhalt und Innenvolumen der Flasche |
 | Überdruckventil bar | 2,4 | |
 | Rauschen | 1 | 0 = Messwerte ohne Rauschen |
 
@@ -129,7 +129,34 @@ Minuten. Folgen, die „Simulation anlegen“ schon berücksichtigt:
 
 Kesseltemperatur °C, Kesselvolumen L, Würze Kessel SG, Durchfluss L/min, Wassermenge L, Heizleistung W (was
 wirklich heizt – über REST sieht man bei SicherAktor nur den Wunsch), Biertemperatur °C, Kühlschrank (Luft) °C,
-Tankdruck bar (in der Leitung), CO₂-Vordruck bar, Dichte SG, CO₂-Flasche g, Gärtage d.
+Tankdruck bar (in der Leitung), CO₂-Vordruck bar, Dichte SG, **CO₂-Flasche bar**, Gärtage d.
+
+## Flaschendruck statt Füllstand
+
+Die Messgröße **CO₂-Flasche** liefert **bar** – denselben Wert wie am Brau-Pi der Drucksensor vor dem
+Druckminderer (Druck 5, J21/0x49 AIN0). Gerechnet wird der Dampfdruck von CO₂ nach Span/Wagner:
+
+| Temperatur | Flaschendruck (Überdruck) |
+|---|---|
+| 10 °C | 44,0 bar |
+| 15 °C | 49,9 bar |
+| 20 °C | 56,3 bar |
+| 25 °C | 63,3 bar |
+| 30 °C | 71,1 bar |
+
+**Der Druck hängt nicht am Füllstand.** In der Flasche steht flüssiges CO₂ unter seinem eigenen Dampfdruck;
+der richtet sich allein nach der Temperatur. Eine 2-kg-Flasche zeigt von 2000 g bis etwa 500 g denselben
+Wert und fällt erst, wenn die letzte Flüssigkeit verdampft ist – dann aber schnell:
+
+| Inhalt (2,7 L Flasche, 20 °C) | Druck |
+|---|---|
+| 2000 g … 500 g | 56,3 bar |
+| 200 g | 40,0 bar |
+| 50 g | 9,2 bar |
+| 10 g | 1,0 bar |
+
+Der Geber ist also eine Warnung „gleich leer“, keine Restmengenanzeige. Wie schnell er fällt, bestimmt
+`CO₂-Flasche L` (Innenvolumen); der Inhalt steht in `CO₂-Flasche g`.
 
 ## Störfälle
 
@@ -140,7 +167,7 @@ Tankdruck bar (in der Leitung), CO₂-Vordruck bar, Dichte SG, CO₂-Flasche g, 
 | Heizungsrelais klebt | heizt trotz Aus – **keine Software fängt das ab**, Temperaturbegrenzer/Schütz nötig | ja |
 | Kein Wasser (Hahn zu) | VentilDosierer schließt nach der Anlaufzeit („Kein Durchfluss nach 5 s“) | ja |
 | Fühlerausfall Tankdruck | GaerDruckLogik: „Tankdruck unbekannt“, Spundventil pulst, nie Drücken | ja |
-| CO₂-Flasche leer | Vordruck 0: „CO₂-Vordruck zu niedrig“, kein Nachdrücken | ja |
+| CO₂-Flasche leer | Vordruck 0 und Flaschendruck 0: „CO₂-Vordruck zu niedrig“, kein Nachdrücken | ja |
 | Gaspfosten verstopft | „Druck springt … Gasweg zum Tank verstopft“; im Tank bläst das Überdruckventil ab | ja |
 | Fühlerausfall Biertemperatur | GaerDruckLogik schaltet Heizung und Kühlung ab (nach 30 s) | ja |
 | Fühlerausfall CO₂-Vordruck | „CO₂-Vordruck unbekannt“, Nachdrücken ausgesetzt | nur auslösbar |

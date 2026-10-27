@@ -250,7 +250,7 @@ def dashboard(t):
     wert("CO₂-Vordruck", t["CO₂-Vordruck"], 880, 124, "bar", 2, blau, 14, aktion="yes")
     wert("Dichte", t["Dichte"], 780, 172, "", 4, weiss, 18)
     wert("Gärtage", t["Gärtage"], 880, 172, "d", 1, grau, 14)
-    wert("CO₂-Flasche", t["CO₂-Flasche"], 880, 210, "g", 0, grau, 12)
+    wert("CO₂-Flasche", t["CO₂-Flasche"], 880, 210, "bar", 1, grau, 12)
     add("Soll °C", "Text", 670, 250, size=11, color=grau)
     add("Soll Temp", "FermenterTargetTemp", 670, 264, fermenter=t["tank"], unit=" °C", size=16, color=weiss)
     add("Soll bar", "Text", 760, 250, size=11, color=grau)

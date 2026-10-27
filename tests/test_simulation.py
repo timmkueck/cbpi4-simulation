@@ -200,8 +200,10 @@ def test_co2_flasche_leer():
     assert w.messwert("CO₂-Vordruck") == 0
     laufen(w, 10, Ausgaenge(co2=True), dt=0.1)
     assert w.messwert("Tankdruck") == pytest.approx(0.0, abs=1e-6)
+    assert w.messwert("CO₂-Flasche") == 0  # leere Flasche: kein Druck
     w.stoerung("co2_leer", False)
-    assert w.messwert("CO₂-Flasche") == 2000  # Flasche getauscht
+    # Flasche getauscht: wieder voll, also steht der Dampfdruck an
+    assert w.messwert("CO₂-Flasche") == pytest.approx(M.co2_dampfdruck_bar(w.p.raum_c) - M.P_ATM, abs=0.2)
 
 
 def test_gaspfosten_verstopft():
@@ -622,3 +624,69 @@ def test_simulierte_gpios_bleiben_frei_und_eindeutig():
     belegt = [g for g, _ in E.AKTOREN.values()] + [E.WASSERVENTIL[1], E.WASSERVENTIL[2]]
     assert not set(belegt) & hat, "simulierter Aktor liegt auf einem Pin des HAT"
     assert len(set(belegt)) == len(belegt), "GPIO doppelt vergeben"
+
+
+# --- Flaschendruck -----------------------------------------------------------------
+
+def test_co2_dampfdruckkurve_trifft_tabellenwerte():
+    # Span/Wagner gegen die uebliche Tabelle (absolut, bar)
+    for t_c, soll in ((0, 34.85), (10, 44.95), (15, 50.87), (20, 57.29), (25, 64.3), (30, 72.1)):
+        assert M.co2_dampfdruck_bar(t_c) == pytest.approx(soll, abs=0.1), f"{t_c} °C"
+    # Ueber dem kritischen Punkt (31,0 °C) gibt es keine Fluessigkeit mehr
+    assert M.co2_dampfdruck_bar(35) == pytest.approx(73.773, abs=0.01)
+
+
+def test_flaschendruck_haengt_nicht_am_fuellstand():
+    w = M.Welt()
+    w.p.raum_c = 20.0
+    voll = _flaschendruck(w, 2000)
+    # Von voll bis auf einen Rest bleibt der Druck gleich: es ist fluessiges CO2 da
+    for g in (1500, 1000, 500):
+        assert _flaschendruck(w, g) == pytest.approx(voll, abs=0.01), f"{g} g"
+    assert voll == pytest.approx(57.29 - M.P_ATM, abs=0.1)  # Ueberdruck am Manometer
+
+
+def test_flaschendruck_faellt_erst_wenn_nichts_fluessiges_mehr_da_ist():
+    w = M.Welt()
+    w.p.raum_c = 20.0
+    voll = _flaschendruck(w, 2000)
+    assert _flaschendruck(w, 200) < voll - 10      # alles gasfoermig, Druck faellt
+    assert _flaschendruck(w, 20) < _flaschendruck(w, 50)
+    assert _flaschendruck(w, 0) == 0.0
+    # monoton: weniger CO2 ergibt nie mehr Druck
+    werte = [_flaschendruck(w, g) for g in (2000, 1000, 400, 200, 100, 50, 10, 0)]
+    assert werte == sorted(werte, reverse=True)
+
+
+def test_flaschendruck_steigt_mit_der_temperatur():
+    w = M.Welt()
+    kalt, warm = _flaschendruck(w, 2000, raum_c=10), _flaschendruck(w, 2000, raum_c=25)
+    assert kalt < warm
+    # Timms Flaschen zeigen rund 50 bar -- das passt zu etwa 15 °C
+    assert _flaschendruck(w, 2000, raum_c=15) == pytest.approx(50, abs=1.0)
+
+
+def test_flasche_wird_als_druck_gemessen():
+    w = M.Welt()
+    w.p.rauschen = 0
+    assert M.MESSGROESSEN["CO₂-Flasche"] == "bar"
+    w.z.g_flasche_g = 2000.0
+    w.p.raum_c = 20.0
+    assert w.messwert("CO₂-Flasche") == pytest.approx(w.flaschendruck_bar(), abs=0.001)
+    # Leere Flasche: 0 bar, nie None
+    w.z.g_flasche_g = 0.0
+    assert w.messwert("CO₂-Flasche") == 0.0
+
+
+def test_stoerfall_co2_leer_zieht_den_flaschendruck_auf_null():
+    w = M.Welt()
+    w.p.rauschen = 0
+    w.stoerung("co2_leer", True)
+    assert w.messwert("CO₂-Flasche") == 0.0 and w.vordruck_bar() == 0.0
+
+
+def _flaschendruck(w, gramm, raum_c=None):
+    if raum_c is not None:
+        w.p.raum_c = raum_c
+    w.z.g_flasche_g = float(gramm)
+    return w.flaschendruck_bar()
