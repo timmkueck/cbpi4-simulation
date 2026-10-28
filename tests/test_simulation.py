@@ -578,8 +578,8 @@ def test_einrichtung_zeiten_und_gaerplan():
 def ids_fuer_plan():
     from cbpi4_simulation import einrichtung as E
     ids = {name: f"a-{name}" for name in E.AKTOREN}
-    ids.update({"kessel": "k", "Kesseltemperatur": "s", "tank": "t",
-                "Wasserventil": "a-Wasserventil", "Kühlwasser": "a-Kühlwasser"})
+    ids.update({"kessel": "k", "kocher": "kk", "Kesseltemperatur": "s",
+                "Kochertemperatur": "sk", "tank": "t", "Wasserventil": "a-Wasserventil"})
     return ids
 
 
@@ -607,6 +607,8 @@ def test_dampfkondensator_ab_80_grad_bis_nach_dem_kochen():
     ein, kochen, aus = (namen.index("Dampfkondensator ein"), namen.index("Kochen"),
                         namen.index("Dampfkondensator aus"))
     assert aufheizen + 1 == ein and ein + 1 == kochen and kochen + 1 == aus
+    # ... und das Umpumpen liegt davor
+    assert namen.index("Pumpe aus") < aufheizen
     # Der Aufheizschritt endet genau bei der Schwelle: Zieltemperatur, kein Timer
     heizschritt = plan[aufheizen][2]
     assert heizschritt["Temp"] == E.DAMPF_AB_C and heizschritt["Timer"] == 0
@@ -617,13 +619,50 @@ def test_dampfkondensator_ab_80_grad_bis_nach_dem_kochen():
     assert schalter["Dampfkondensator aus"] == {"toggle_type": "Off", "Actor": "a-Dampfkondensator"}
 
 
-def test_simulierte_gpios_bleiben_frei_und_eindeutig():
+def test_simulierte_gpios_bilden_die_platine_ab():
     from cbpi4_simulation import einrichtung as E
-    # Belegt am HAT (Biersteuerung, Zweig ventile-druck)
-    hat = {2, 3, 4, 6, 9, 10, 11, 13, 16, 17, 18, 19, 20, 21, 22, 26, 27}
+    # Seit die Platine jeden GPIO von 2 bis 27 fuehrt, gibt es keine freien Pins
+    # mehr. Die Simulation nutzt deshalb dieselben wie die echte Anlage.
+    platine = {27: "Maischepfanne", 21: "Würzekocher", 22: "Pumpe", 18: "Rührwerk",
+               19: "Kühlschrank", 20: "Gärschrank Heizung", 10: "Kühlwasser",
+               11: "Dampfkondensator", 16: "Spundventil", 17: "CO₂-Ventil",
+               23: "Wegeventil Maischebottich", 24: "Wegeventil Kochkessel"}
+    for gpio, name in platine.items():
+        assert name in E.AKTOREN, f"{name} fehlt in AKTOREN"
+        assert E.AKTOREN[name][0] == gpio, f"{name}: GPIO {E.AKTOREN[name][0]} statt {gpio}"
+    assert E.WASSERVENTIL[1] == 9 and E.WASSERVENTIL[2] == 6   # J20 Ventil 5, J19 Durchfluss
     belegt = [g for g, _ in E.AKTOREN.values()] + [E.WASSERVENTIL[1], E.WASSERVENTIL[2]]
-    assert not set(belegt) & hat, "simulierter Aktor liegt auf einem Pin des HAT"
     assert len(set(belegt)) == len(belegt), "GPIO doppelt vergeben"
+
+
+def test_umpumpen_oeffnet_erst_den_weg_und_schaltet_die_pumpe_zuletzt_aus():
+    from cbpi4_simulation import einrichtung as E
+    plan = E.maischplan(ids_fuer_plan(), 60, mit_dosierer=True)
+    namen = [s[0] for s in plan]
+    auf = namen.index("Weg zum Kocher öffnen")
+    ein = namen.index("Pumpe ein")
+    warten = namen.index("Umpumpen")
+    aus = namen.index("Pumpe aus")
+    zu = namen.index("Weg zum Kocher schließen")
+    # Reihenfolge: Ventil auf, Pumpe an, warten, Pumpe aus, Ventil zu.
+    # Nie die Pumpe gegen ein geschlossenes Ventil laufen lassen.
+    assert auf < ein < warten < aus < zu
+    assert namen.index("Treber ziehen") < auf
+    assert zu < namen.index("Kochen")
+    schalter = {s[0]: s[2] for s in plan if s[1] == "ToggleStep"}
+    assert schalter["Weg zum Kocher öffnen"]["Actor"] == "a-Wegeventil Kochkessel"
+    assert schalter["Pumpe aus"] == {"toggle_type": "Off", "Actor": "a-Pumpe"}
+
+
+def test_gekocht_wird_im_zweiten_kessel():
+    from cbpi4_simulation import einrichtung as E
+    plan = E.maischplan(ids_fuer_plan(), 60, mit_dosierer=True)
+    nach = {s[0]: s[2] for s in plan}
+    for name, _, _ in E.RASTEN:
+        assert nach[name]["Kettle"] == "k", f"{name} gehoert in die Maischepfanne"
+    for name in ("Kochen", "Abkühlen", f"Aufheizen auf {E.DAMPF_AB_C} °C"):
+        assert nach[name]["Kettle"] == "kk", f"{name} gehoert in den Wuerzekocher"
+        assert nach[name]["Sensor"] == "sk"
 
 
 # --- Flaschendruck -----------------------------------------------------------------
@@ -742,3 +781,60 @@ def test_nach_dem_leeren_laesst_sich_wieder_brauen():
     assert w.z.k_vol_l == pytest.approx(28, abs=0.1)
     assert w.z.wasser_gesamt_l == pytest.approx(28, abs=0.1)
     assert w.z.k_temp > w.p.leitungswasser_c
+
+
+# --- Pumpe und Wegeventile ---------------------------------------------------------
+
+def test_pumpe_schiebt_nur_bei_offenem_weg_zum_kocher():
+    w = M.Welt()
+    w.wasser_einfuellen(20)
+    w.einmaischen(5.5)
+    # Kurz heizen, damit sich Extrakt loest -- 20 s Echtzeit sind bei Zeitraffer 60
+    # rund 20 Minuten Maische. Laenger und der Kessel kocht trocken.
+    laufen(w, 20, Ausgaenge(heizung=1.0), dt=1.0)
+    vorher, extrakt = w.z.k_vol_l, w.z.k_extrakt_kg
+    assert extrakt > 0 and vorher == pytest.approx(20, abs=0.5)
+
+    laufen(w, 30, Ausgaenge(pumpe=True, weg_kocher=True), dt=1.0)
+    assert w.z.kk_vol_l == pytest.approx(w.p.pumpe_lpm / 60 * 30, abs=0.5)
+    assert w.z.k_vol_l == pytest.approx(vorher - w.z.kk_vol_l, abs=0.5)
+    # Der Extrakt wandert anteilig mit. Er darf dabei zunehmen: die Maische
+    # loest waehrend des Pumpens weiter nach, solange sie zwischen 50 und 80 Grad ist.
+    assert w.z.kk_extrakt_kg > 0
+    assert w.z.k_extrakt_kg + w.z.kk_extrakt_kg >= extrakt
+    # Im Kocher steht Wuerze, keine blosse Fluessigkeit
+    assert w.kocher_plato() > 0
+    assert M.plato_zu_sg(w.kocher_plato()) > 1.0
+
+
+def test_laeutern_im_kreis_veraendert_die_mengen_nicht():
+    w = M.Welt()
+    w.wasser_einfuellen(20)
+    vorher = (w.z.k_vol_l, w.z.kk_vol_l)
+    laufen(w, 60, Ausgaenge(pumpe=True, weg_maische=True), dt=1.0)
+    assert (w.z.k_vol_l, w.z.kk_vol_l) == pytest.approx(vorher)
+
+
+def test_pumpe_gegen_geschlossene_ventile_foerdert_nichts():
+    w = M.Welt()
+    w.wasser_einfuellen(20)
+    laufen(w, 60, Ausgaenge(pumpe=True), dt=1.0)
+    assert w.z.kk_vol_l == 0.0 and w.z.k_vol_l == pytest.approx(20, abs=0.01)
+
+
+def test_pumpe_laeuft_in_echtzeit_nicht_im_zeitraffer():
+    # Wie Wasser und Gas: die echten Plugins schalten in Echtzeit
+    langsam, schnell = M.Welt(), M.Welt()
+    for w, raffer in ((langsam, 1.0), (schnell, 60.0)):
+        w.p.zeitraffer_brauen = raffer
+        w.wasser_einfuellen(20)
+        laufen(w, 30, Ausgaenge(pumpe=True, weg_kocher=True), dt=1.0)
+    assert langsam.z.kk_vol_l == pytest.approx(schnell.z.kk_vol_l, abs=0.01)
+
+
+def test_pumpe_macht_den_kessel_nicht_negativ():
+    w = M.Welt()
+    w.wasser_einfuellen(2)
+    laufen(w, 120, Ausgaenge(pumpe=True, weg_kocher=True), dt=1.0)
+    assert w.z.k_vol_l == 0.0
+    assert w.z.kk_vol_l == pytest.approx(2, abs=0.01)

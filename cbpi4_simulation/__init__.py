@@ -68,19 +68,24 @@ PARAMETER = [
     ("Heizung Gärtank W", "gaertank_heizung_w", 1, ""),
     ("CO₂-Vordruck bar", "co2_vordruck_bar", 1, "Druckminderer"),
     ("CO₂-Flasche g", "co2_flasche_g", 1, "Inhalt einer vollen Flasche"),
+    ("Pumpe L/min", "pumpe_lpm", 1, "Förderleistung der Braupumpe, Echtzeit"),
     ("CO₂-Flasche L", "co2_flasche_l", 1, "Innenvolumen der Flasche (2-kg-Flasche: 2,7 L). Bestimmt, "
      "ab wann der Druck fällt: Solange flüssiges CO₂ da ist, steht der Dampfdruck an"),
     ("Überdruckventil bar", "ueberdruckventil_bar", 1, "mechanisches PRV am Deckel (All Rounder: 2,4 bar)"),
     ("Rauschen", "rauschen", 1, "Messrauschen, 0 = aus, 1 = üblich"),
 ]
 ROLLEN = [
-    ("Heizung Kessel", "heizung"),
+    ("Heizung Kessel", "heizung"),            # Maischepfanne (BIAB: der eine Kessel)
+    ("Heizung Würzekocher", "heizung_kocher"),
     ("Wasserventil", "wasser"),
     ("Kühlwasser Würzekühler", "kuehlwasser"),
     ("Kühlung Gärtank", "kuehlung"),
     ("Heizung Gärtank", "gaertank_heizung"),
     ("Spundventil", "spund"),
     ("CO₂-Ventil", "co2"),
+    ("Pumpe", "pumpe"),
+    ("Wegeventil Maischebottich", "weg_maische"),
+    ("Wegeventil Kochkessel", "weg_kocher"),
 ]
 # Stoerfall in cbpi -> (Schluessel im Modell, erwartete Reaktion der echten Plugins)
 STOERFALL_AUSWAHL = {
@@ -177,6 +182,10 @@ class Wasserzaehler:
 def ausgaenge_lesen(cbpi, rollen, zaehler, welt):
     a = Ausgaenge(
         heizung=ausgang(cbpi, rollen.get("heizung")),
+        heizung_kocher=ausgang(cbpi, rollen.get("heizung_kocher")),
+        pumpe=ausgang(cbpi, rollen.get("pumpe")) > 0,
+        weg_maische=ausgang(cbpi, rollen.get("weg_maische")) > 0,
+        weg_kocher=ausgang(cbpi, rollen.get("weg_kocher")) > 0,
         kuehlwasser=ausgang(cbpi, rollen.get("kuehlwasser")),
         kuehlung=ausgang(cbpi, rollen.get("kuehlung")),
         gaertank_heizung=ausgang(cbpi, rollen.get("gaertank_heizung")),

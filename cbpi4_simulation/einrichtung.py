@@ -18,36 +18,46 @@ import urllib.error
 import urllib.request
 
 KESSEL = "Sudkessel (Sim)"
+KOCHER = "Würzekocher (Sim)"
 TANK = "FermZilla (Sim)"
 ZENTRALE = "Brausimulation"
 # Fuehlername -> Messgroesse (der Kuehlschrank als Aktor heisst schon "Kühlschrank")
-FUEHLER = {name: name for name in ("Kesseltemperatur", "Kesselvolumen", "Würze Kessel", "Durchfluss", "Wassermenge",
+FUEHLER = {name: name for name in ("Kesseltemperatur", "Kesselvolumen", "Würze Kessel",
+                                   "Kochertemperatur", "Kochervolumen", "Würze Kocher",
+                                   "Durchfluss", "Wassermenge",
                                    "Heizleistung", "Biertemperatur", "Tankdruck", "CO₂-Vordruck", "Dichte",
                                    "CO₂-Flasche", "Gärtage")}
 FUEHLER["Kühlschrank Luft"] = "Kühlschrank"
 SUDNAME = "Sim-Sud"
 REZEPT_ID = "simulation-sud"  # Datei recipes/simulation-sud.yaml
-# GPIOs, die der HAT nicht belegt (Stand Biersteuerung f5a2bcf: belegt sind 2-4, 6, 9-11, 13, 16-22, 26, 27).
-# Simulierte Aktoren stoeren so keinen echten (SicherAktor prueft doppelte GPIOs). 15 (UART-RX) nur als
-# Durchfluss-Eingang, den die Simulation nie anfasst.
-# Achtung: Mit dem Dampfkondensator sind alle neun freien GPIOs vergeben. Ein weiterer simulierter
-# Aktor braucht erst einen frei gewordenen Pin.
+# GPIOs wie auf der Platine (Biersteuerung, Zweig ventile-druck). Seit die
+# Platine jeden GPIO von 2 bis 27 fuehrt, gibt es keine freien Pins mehr, auf die
+# die Simulation ausweichen koennte -- sie bildet deshalb die echte Belegung ab.
+# Unbedenklich, weil alle Teile mit "Simulation = Ja" laufen und keinen GPIO
+# anfassen, und weil die Simulation ohnehin in einer eigenen cbpi-Instanz lebt.
 AKTOREN = {  # Name -> (GPIO, Art)
-    "Heizelement": (5, "Heizung"),
-    "Rührwerk": (12, "Rührwerk"),
-    "Kühlwasser": (23, "Sonstiges"),      # Kuehlspirale, am HAT Ventil 6 (J20, GPIO 10)
-    "Dampfkondensator": (14, "Sonstiges"),  # am HAT Ventil 7 (J20, GPIO 11)
-    "Kühlschrank": (24, "Sonstiges"),
-    "Spundventil": (25, "Sonstiges"),
-    "CO₂-Ventil": (7, "Sonstiges"),
+    "Maischepfanne": (27, "Heizung"),          # Relais J4
+    "Würzekocher": (21, "Heizung"),            # Relais J15
+    "Pumpe": (22, "Sonstiges"),                # Relais J16
+    "Rührwerk": (18, "Rührwerk"),              # Relais J7
+    "Kühlschrank": (19, "Sonstiges"),          # Gaerschrank kuehlen, J13
+    "Gärschrank Heizung": (20, "Sonstiges"),   # Gaerschrank heizen, J8
+    "Kühlwasser": (10, "Sonstiges"),           # Ventil 6, Kuehlspirale
+    "Dampfkondensator": (11, "Sonstiges"),     # Ventil 7
+    "Spundventil": (16, "Sonstiges"),          # Ventil 1
+    "CO₂-Ventil": (17, "Sonstiges"),           # Ventil 2
+    "Wegeventil Maischebottich": (23, "Sonstiges"),  # Ventil 8
+    "Wegeventil Kochkessel": (24, "Sonstiges"),      # Ventil 9
 }
-WASSERVENTIL = ("Wasserventil", 8, 15)  # Name, GPIO Ventil, GPIO Durchfluss
+WASSERVENTIL = ("Wasserventil", 9, 6)  # Name, GPIO Ventil (J20), GPIO Durchfluss (J19)
 WASSER_L = 28
 # Maischplan in Simulationsminuten
 RASTEN = [("Maltoserast", 63, 60), ("Verzuckerungsrast", 72, 30), ("Abmaischen", 78, 10)]
 EINMAISCHEN_C = 57
 KOCHEN_MIN = 60
 ANSTELLEN_C = 20
+# Umpumpen laeuft in Echtzeit: Menge durch Foerderleistung, aufgerundet
+UMPUMPEN_MIN = 3
 # Das Ruehrwerk laeuft ueber die ganze Maische, der Dampfkondensator ab dieser Temperatur
 # bis zum Ende des Kochens. Beides schalten Schritte im Rezept (ToggleStep), nicht die
 # Kessellogik: cbpi 4.7.7 fasst den Ruehrwerksausgang eines Kessels nirgends selbst an.
@@ -130,8 +140,13 @@ def echt_min(sim_min, faktor):
 # --- Plaene ---------------------------------------------------------------------
 
 def maischplan(ids, faktor, mit_dosierer):
-    """Schritte fuer cbpi (Maischplan). Zeiten in Echtminuten."""
+    """Schritte fuer cbpi (Maischplan). Zeiten in Echtminuten.
+
+    Zwei Gefaesse: gemaischt wird in der Maischepfanne, gekocht im Wuerzekocher.
+    Dazwischen schiebt die Pumpe (Relais J16) ueber das Wegeventil Richtung
+    Kochkessel (Ventil 9) um."""
     k, sensor = ids["kessel"], ids["Kesseltemperatur"]
+    kk, sensor_k = ids["kocher"], ids["Kochertemperatur"]
     s = []
     if mit_dosierer:
         s.append(("Wasser dosieren", "WasserDosieren", {"Liter": WASSER_L, "Ventil": ids["Wasserventil"]}))
@@ -149,17 +164,28 @@ def maischplan(ids, faktor, mit_dosierer):
                                      "Kettle": k, "AutoMode": "Yes"}))
     s.append(("Rührwerk aus", "ToggleStep", {"toggle_type": "Off", "Actor": ids["Rührwerk"]}))
     s.append(("Treber ziehen", "SimEreignis", {"Ereignis": "Treber ziehen"}))
+    # Umpumpen: erst den Weg oeffnen, dann die Pumpe. Die Pumpe foerdert in
+    # Echtzeit, die Wartezeit richtet sich also nach der Menge, nicht nach dem
+    # Zeitraffer. Zum Schluss Pumpe aus, dann erst das Ventil -- nie umgekehrt,
+    # sonst foerdert sie gegen ein geschlossenes Ventil.
+    s.append(("Weg zum Kocher öffnen", "ToggleStep",
+              {"toggle_type": "On", "Actor": ids["Wegeventil Kochkessel"]}))
+    s.append(("Pumpe ein", "ToggleStep", {"toggle_type": "On", "Actor": ids["Pumpe"]}))
+    s.append(("Umpumpen", "WaitStep", {"Timer": UMPUMPEN_MIN}))
+    s.append(("Pumpe aus", "ToggleStep", {"toggle_type": "Off", "Actor": ids["Pumpe"]}))
+    s.append(("Weg zum Kocher schließen", "ToggleStep",
+              {"toggle_type": "Off", "Actor": ids["Wegeventil Kochkessel"]}))
     # Dampfkondensator ab DAMPF_AB_C: ein eigener Aufheizschritt ohne Timer endet genau
     # dort, danach schaltet der ToggleStep. Waehrend der Maische wird die Schwelle nie
     # erreicht (Abmaischen bei 78 Grad).
-    s.append((f"Aufheizen auf {DAMPF_AB_C} °C", "MashStep", {"Temp": DAMPF_AB_C, "Timer": 0, "Sensor": sensor,
-                                                             "Kettle": k, "AutoMode": "Yes"}))
+    s.append((f"Aufheizen auf {DAMPF_AB_C} °C", "MashStep", {"Temp": DAMPF_AB_C, "Timer": 0, "Sensor": sensor_k,
+                                                             "Kettle": kk, "AutoMode": "Yes"}))
     s.append(("Dampfkondensator ein", "ToggleStep", {"toggle_type": "On", "Actor": ids["Dampfkondensator"]}))
-    s.append(("Kochen", "BoilStep", {"Temp": 99, "Timer": echt_min(KOCHEN_MIN, faktor), "Sensor": sensor,
-                                     "Kettle": k, "AutoMode": "Yes", "LidAlert": "No", "First_Wort": "No"}))
+    s.append(("Kochen", "BoilStep", {"Temp": 99, "Timer": echt_min(KOCHEN_MIN, faktor), "Sensor": sensor_k,
+                                     "Kettle": kk, "AutoMode": "Yes", "LidAlert": "No", "First_Wort": "No"}))
     s.append(("Dampfkondensator aus", "ToggleStep", {"toggle_type": "Off", "Actor": ids["Dampfkondensator"]}))
-    s.append(("Abkühlen", "CooldownStep", {"Temp": ANSTELLEN_C, "Sensor": sensor, "Actor": ids["Kühlwasser"],
-                                           "Kettle": k}))
+    s.append(("Abkühlen", "CooldownStep", {"Temp": ANSTELLEN_C, "Sensor": sensor_k, "Actor": ids["Kühlwasser"],
+                                           "Kettle": kk}))
     s.append(("Anstellen", "SimEreignis", {"Ereignis": "Anstellen", "Gärtank": ids["tank"],
                                            "Gärplan starten": "Ja"}))
     return s
@@ -231,7 +257,7 @@ def dashboard(t):
     wert("Durchfluss", t["Durchfluss"], 240, 172, "L/min", 1, blau, 14)
     wert("Heizleistung", t["Heizleistung"], 240, 210, "W", 0, rot, 14)
     add("Kessel ein/aus", "KettleControl", 20, 250, kettle=t["kessel"], size="normal", orientation="horizontal")
-    for i, (name, farbe) in enumerate((("Heizelement", "red"), ("Rührwerk", "green"), ("Kühlwasser", "blue"),
+    for i, (name, farbe) in enumerate((("Maischepfanne", "red"), ("Rührwerk", "green"), ("Kühlwasser", "blue"),
                                        ("Wasserventil", "blue"))):
         if t.get(name):
             add(f"LED {name}", "Led", 20 + i * 85, 300, actor=t[name], color=farbe)
@@ -281,7 +307,8 @@ def aktoren_anlegen(cbpi, ids, sicher, dosierer):
         if sicher:
             props = {"GPIO": gpio, "Aktiv bei": "HIGH", "Art": art, "Takt s": 5, "Simulation": "Ja"}
             if art == "Heizung":
-                props.update({"Fühler": ids["Kesseltemperatur"], "Max Temperatur": 105, "Anstieg Minuten": 10,
+                props.update({"Fühler": ids["Kochertemperatur" if name == "Würzekocher"
+                                           else "Kesseltemperatur"], "Max Temperatur": 105, "Anstieg Minuten": 10,
                               "Mindestanstieg K": 1, "Anstieg ab °C ignorieren": 95})
             # aktualisieren: auch vorhandene simulierte Aktoren bekommen die aktuellen GPIOs
             neu[name] = sicherstellen(cbpi, "actor", name, dict(type="SicherAktor", props=props), aktualisieren=True)
@@ -338,7 +365,11 @@ def einrichten(url, zeitraffer_brauen=60.0, zeitraffer_gaerung=120.0, dashboard_
     aus("Kessel und Gärtank:")
     ids["kessel"] = sicherstellen(cbpi, "kettle", KESSEL, dict(
         type="SicherHysterese" if "SicherHysterese" in k_typen else "Hysteresis",
-        sensor=ids["Kesseltemperatur"], heater=ids["Heizelement"], agitator=ids["Rührwerk"], target_temp=0,
+        sensor=ids["Kesseltemperatur"], heater=ids["Maischepfanne"], agitator=ids["Rührwerk"], target_temp=0,
+        props={"OffsetOn": 0.5, "OffsetOff": 0}), pruefen=False, aktualisieren=True)
+    ids["kocher"] = sicherstellen(cbpi, "kettle", KOCHER, dict(
+        type="SicherHysterese" if "SicherHysterese" in k_typen else "Hysteresis",
+        sensor=ids["Kochertemperatur"], heater=ids["Würzekocher"], agitator="", target_temp=0,
         props={"OffsetOn": 0.5, "OffsetOff": 0}), pruefen=False, aktualisieren=True)
     if "GaerDruckLogik" in f_typen:
         f_typ = "GaerDruckLogik"
@@ -353,15 +384,21 @@ def einrichten(url, zeitraffer_brauen=60.0, zeitraffer_gaerung=120.0, dashboard_
         f_typ, f_props = "FermenterHysteresis", {"HeaterOffsetOn": 0.3, "HeaterOffsetOff": 0, "CoolerOffsetOn": 0.3,
                                                  "CoolerOffsetOff": 0, "AutoStart": "No"}
     ids["tank"] = sicherstellen(cbpi, "fermenter", TANK, dict(
-        type=f_typ, sensor=ids["Biertemperatur"], pressure_sensor=ids["Tankdruck"], heater="",
+        type=f_typ, sensor=ids["Biertemperatur"], pressure_sensor=ids["Tankdruck"],
+        heater=ids["Gärschrank Heizung"],
         cooler=ids["Kühlschrank"], valve=ids["Spundventil"], brewname=SUDNAME,
         description="Simulierter FermZilla", target_temp=20, target_pressure=0, props=f_props), pruefen=False,
         aktualisieren=True)
 
     aus("Zentrale:")
-    rollen = {"Heizung Kessel": ids["Heizelement"], "Wasserventil": ids["Wasserventil"],
+    rollen = {"Heizung Kessel": ids["Maischepfanne"], "Heizung Würzekocher": ids["Würzekocher"],
+              "Wasserventil": ids["Wasserventil"],
               "Kühlwasser Würzekühler": ids["Kühlwasser"], "Kühlung Gärtank": ids["Kühlschrank"],
-              "Heizung Gärtank": "", "Spundventil": ids["Spundventil"], "CO₂-Ventil": ids["CO₂-Ventil"]}
+              "Heizung Gärtank": ids["Gärschrank Heizung"],
+              "Spundventil": ids["Spundventil"], "CO₂-Ventil": ids["CO₂-Ventil"],
+              "Pumpe": ids["Pumpe"],
+              "Wegeventil Maischebottich": ids["Wegeventil Maischebottich"],
+              "Wegeventil Kochkessel": ids["Wegeventil Kochkessel"]}
     params = {"Zeitraffer Brauen": zeitraffer_brauen, "Zeitraffer Gärung": zeitraffer_gaerung}
     if zentrale_id:  # aus cbpi heraus: der Fuehler, an dem die Aktion aufgerufen wurde
         z = next((x for x in cbpi.liste("sensor") if x["id"] == zentrale_id), None)

@@ -24,9 +24,15 @@ Braubrücke, Plugin `cbpi4-kellersensor`).
 - Einrichtung muss **im Browser** gehen (Wunsch von Timm): Fühler Typ BrauSimulation, „Beim Speichern anlegen = Ja“;
   alle weiteren Aktionen über den ⋮-Knopf im Dashboard. Neue Funktionen nicht nur als Skript anbieten.
 - Nur in einer eigenen cbpi-Instanz betreiben (nur an 127.0.0.1). Das Anlegen bricht bei gleichnamigen *nicht*
-  simulierten Teilen ab; simulierte Aktoren liegen auf GPIOs, die der HAT nicht belegt (5, 7, 8, 12, 14, 15, 23,
-  24, 25; Stand f5a2bcf). Diese neun Pins sind jetzt **alle vergeben** -- ein weiterer simulierter Aktor braucht
-  erst einen freien. Ändert sich die Platine, `AKTOREN`/`WASSERVENTIL` in `einrichtung.py` nachziehen.
+  simulierten Teilen ab.
+- **Die simulierten Aktoren liegen auf denselben GPIOs wie die echte Anlage** (Maischepfanne 27, Würzekocher 21,
+  Pumpe 22, Rührwerk 18, Gärschrank 19/20, Kühlspirale 10, Dampfkondensator 11, Spundventil 16, CO₂-Ventil 17,
+  Wegeventile 23/24, Brauwasser 9 mit Durchfluss 6). Früher wichen sie auf freie Pins aus; seit die Platine jeden
+  GPIO von 2 bis 27 führt, gibt es keine freien mehr. Unbedenklich, weil alles mit `Simulation = Ja` läuft.
+  Ändert sich die Platine, `AKTOREN`/`WASSERVENTIL` in `einrichtung.py` nachziehen.
+- Zwei Gefäße: Maischepfanne (`kessel`) und Würzekocher (`kocher`), je mit eigener Heizung und Kessellogik.
+  Die Pumpe schiebt über das Wegeventil Richtung Kochkessel um; sie läuft in **Echtzeit**, nicht im Zeitraffer.
+  Im Plan gilt: erst Ventil auf, dann Pumpe an -- und am Ende erst Pumpe aus, dann Ventil zu.
 - Rührwerk und Dampfkondensator schalten `ToggleStep`-Schritte im Maischplan, nicht die Kessellogik: cbpi 4.7.7
   fasst `kettle.agitator` nirgends selbst an. Rührwerk ein vor dem ersten Heizschritt, aus nach `RASTEN[-1]`;
   der Kondensator ab `DAMPF_AB_C` (eigener `MashStep` ohne Timer als Schwelle) bis nach dem Kochen. Wird der

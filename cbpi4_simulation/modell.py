@@ -51,9 +51,12 @@ STOERFAELLE = {
 
 # Messgroessen: Name -> Einheit
 MESSGROESSEN = {
-    "Kesseltemperatur": "°C",
+    "Kesseltemperatur": "°C",     # Maischepfanne
     "Kesselvolumen": "L",
     "Würze Kessel": "SG",
+    "Kochertemperatur": "°C",     # Wuerzekocher
+    "Kochervolumen": "L",
+    "Würze Kocher": "SG",
     "Durchfluss": "L/min",
     "Heizleistung": "W",
     "Wassermenge": "L",
@@ -65,7 +68,7 @@ MESSGROESSEN = {
     "CO₂-Flasche": "bar",
     "Gärtage": "d",
 }
-RAUSCHEN = {"Kesseltemperatur": 0.05, "Biertemperatur": 0.03, "Kühlschrank": 0.1, "Tankdruck": 0.003,
+RAUSCHEN = {"Kesseltemperatur": 0.05, "Kochertemperatur": 0.05, "Biertemperatur": 0.03, "Kühlschrank": 0.1, "Tankdruck": 0.003,
             "CO₂-Vordruck": 0.005, "Dichte": 0.0002, "CO₂-Flasche": 0.05}
 NACHKOMMA = {"SG": 4, "bar": 3, "g": 0, "L": 2, "L/min": 2, "d": 2, "°C": 2}
 
@@ -113,6 +116,7 @@ class Parameter:
     co2_vordruck_bar: float = 1.5  # Druckminderer
     co2_flasche_g: float = 2000.0
     co2_flasche_l: float = 2.7  # Innenvolumen einer 2-kg-Flasche
+    pumpe_lpm: float = 12.0     # Foerderleistung der Braupumpe
     ueberdruckventil_bar: float = 2.4  # mechanisches PRV am Deckel
     rauschen: float = 1.0  # 0 = ohne Messrauschen
 
@@ -120,7 +124,11 @@ class Parameter:
 @dataclass
 class Ausgaenge:
     """Was die Aktoren gerade tun, 0..1 (Takt und Sperren schon eingerechnet)."""
-    heizung: float = 0.0
+    heizung: float = 0.0          # Maischepfanne
+    heizung_kocher: float = 0.0   # Wuerzekocher
+    pumpe: bool = False           # Relais J16 / GPIO 22
+    weg_maische: bool = False     # Wegeventil zurueck in den Maischebottich
+    weg_kocher: bool = False      # Wegeventil in den Wuerzekocher
     kuehlwasser: float = 0.0
     kuehlung: float = 0.0
     gaertank_heizung: float = 0.0
@@ -153,6 +161,11 @@ class Zustand:
     k_malz_kg: float = 0.0
     k_extrakt_pot_kg: float = 0.0  # noch zu loesen
     k_extrakt_kg: float = 0.0  # geloest
+    # Wuerzekocher (zweites Gefaess; beim BIAB bleibt er leer)
+    kk_vol_l: float = 0.0
+    kk_temp: float = 20.0
+    kk_fuehler: float = 20.0
+    kk_extrakt_kg: float = 0.0
     wasser_gesamt_l: float = 0.0
     durchfluss_lpm: float = 0.0
     heizleistung_w: float = 0.0  # was gerade wirklich heizt
@@ -175,7 +188,8 @@ class Zustand:
 class Welt:
     def __init__(self, parameter=None, zufall=None):
         self.p = parameter or Parameter()
-        self.z = Zustand(k_temp=self.p.raum_c, k_fuehler=self.p.raum_c, g_temp=self.p.raum_c,
+        self.z = Zustand(k_temp=self.p.raum_c, k_fuehler=self.p.raum_c,
+                         kk_temp=self.p.raum_c, kk_fuehler=self.p.raum_c, g_temp=self.p.raum_c,
                          g_luft=self.p.raum_c, g_flasche_g=self.p.co2_flasche_g)
         self.zufall = zufall or random.Random()
         self._kopf_leer()
@@ -242,7 +256,7 @@ class Welt:
         z.k_extrakt_pot_kg = 0.0
 
     def kessel_leeren(self):
-        """Nur den Kessel leeren -- Gaertank und Stoerfaelle bleiben, wie sie sind.
+        """Maischepfanne und Wuerzekocher leeren -- Gaertank und Stoerfaelle bleiben.
 
         Fuer den naechsten Versuch am Brautag, ohne die laufende Gaerung
         wegzuwerfen. Inhalt, Malz und Extrakt gehen auf null, der Kessel nimmt
@@ -254,15 +268,38 @@ class Welt:
         z.k_extrakt_pot_kg = 0.0
         z.k_extrakt_kg = 0.0
         z.k_temp = z.k_fuehler = self.p.raum_c
+        z.kk_vol_l = 0.0
+        z.kk_extrakt_kg = 0.0
+        z.kk_temp = z.kk_fuehler = self.p.raum_c
         z.wasser_gesamt_l = 0.0
         z.durchfluss_lpm = 0.0
         z.heizleistung_w = 0.0
+
+    def umpumpen(self):
+        """Wuerze aus der Maischepfanne in den Wuerzekocher.
+
+        Zwei-Geraete-Aufbau: Nach dem Abmaischen und Treberziehen wandert alles
+        hinueber. Beim BIAB bleibt der Schritt aus, dann kocht die Pfanne selbst."""
+        z = self.z
+        if z.k_vol_l <= 0:
+            return
+        c_alt = (z.kk_vol_l + z.kk_extrakt_kg) * CP_WASSER + 3000.0
+        c_neu = (z.k_vol_l + z.k_extrakt_kg) * CP_WASSER
+        z.kk_temp = (c_alt * z.kk_temp + c_neu * z.k_temp) / (c_alt + c_neu)
+        z.kk_vol_l += z.k_vol_l
+        z.kk_extrakt_kg += z.k_extrakt_kg
+        z.k_vol_l = 0.0
+        z.k_extrakt_kg = 0.0
+        z.k_extrakt_pot_kg = 0.0
+        z.k_malz_kg = 0.0
 
     def anstellen(self):
         """Wuerze vom Kessel in den Gaertank, Hefe dazu. Ohne Wuerze im Kessel
         (kein Brautag) mit den Vorgaben `wuerze_l` und `stammwuerze_p`."""
         z, p = self.z, self.p
-        if z.k_vol_l - TRUB_L >= 5:
+        if z.kk_vol_l - TRUB_L >= 5:        # zwei Geraete: die Wuerze steht im Kocher
+            menge, plato, temp = z.kk_vol_l - TRUB_L, self.kocher_plato(), z.kk_temp
+        elif z.k_vol_l - TRUB_L >= 5:       # BIAB: alles in der Pfanne
             menge, plato, temp = z.k_vol_l - TRUB_L, self.kessel_plato(), z.k_temp
         else:
             menge, plato, temp = p.wuerze_l, p.stammwuerze_p, z.g_temp
@@ -271,9 +308,15 @@ class Welt:
         z.g_rest, z.g_hefe, z.g_co2_gl, z.g_tage = 1.0, 0.01, 0.0, 0.0
         z.angestellt = True
         z.k_vol_l, z.k_extrakt_kg, z.k_extrakt_pot_kg, z.k_malz_kg = 0.0, 0.0, 0.0, 0.0
+        z.kk_vol_l, z.kk_extrakt_kg = 0.0, 0.0
         self._kopf_leer()
 
     # --- Abgeleitete Groessen ------------------------------------------------------
+
+    def kocher_plato(self):
+        z = self.z
+        masse = z.kk_vol_l + z.kk_extrakt_kg
+        return 100.0 * z.kk_extrakt_kg / masse if masse > 0 else 0.0
 
     def kessel_plato(self):
         z = self.z
@@ -358,6 +401,9 @@ class Welt:
             "Kesseltemperatur": z.k_fuehler,
             "Kesselvolumen": z.k_vol_l,
             "Würze Kessel": plato_zu_sg(self.kessel_plato()),
+            "Kochertemperatur": z.kk_fuehler,
+            "Kochervolumen": z.kk_vol_l,
+            "Würze Kocher": plato_zu_sg(self.kocher_plato()),
             "Durchfluss": z.durchfluss_lpm,
             "Heizleistung": z.heizleistung_w,
             "Wassermenge": z.wasser_gesamt_l,
@@ -382,13 +428,39 @@ class Welt:
         if dt_real <= 0:
             return
         self._wasser(dt_real, a)
+        self._pumpe(dt_real, a)
         self._gaswege(dt_real, a)
-        for teil, faktor in ((self._kessel, self.p.zeitraffer_brauen), (self._gaertank, self.p.zeitraffer_gaerung)):
+        for teil, faktor in ((self._kessel, self.p.zeitraffer_brauen),
+                             (self._kocher, self.p.zeitraffer_brauen),
+                             (self._gaertank, self.p.zeitraffer_gaerung)):
             rest = dt_real * max(faktor, 0.0)
             while rest > 1e-9:  # Teilschritte hoechstens 5 s Simulationszeit
                 dt = min(rest, 5.0)
                 teil(dt, a)
                 rest -= dt
+
+    def _pumpe(self, dt, a):
+        """Pumpe und die zwei Wegeventile. Echtzeit, nicht im Zeitraffer -- wie
+        Wasser und Gas, weil hier Mengen in Minuten fliessen, nicht in Stunden.
+
+        Ventil Richtung Kocher offen: die Wuerze wandert hinueber.
+        Ventil Richtung Maischebottich offen: sie laeuft im Kreis (Laeutern),
+        die Mengen aendern sich nicht.
+        Beide zu: die Pumpe foerdert gegen geschlossene Ventile, nichts fliesst."""
+        z = self.z
+        if not a.pumpe or not a.weg_kocher or z.k_vol_l <= 0:
+            return
+        menge = min(z.k_vol_l, self.p.pumpe_lpm / 60.0 * dt)
+        anteil = menge / z.k_vol_l
+        extrakt = z.k_extrakt_kg * anteil
+        c_alt = (z.kk_vol_l + z.kk_extrakt_kg) * CP_WASSER + 3000.0
+        c_neu = (menge + extrakt) * CP_WASSER
+        if c_alt + c_neu > 0:
+            z.kk_temp = (c_alt * z.kk_temp + c_neu * z.k_temp) / (c_alt + c_neu)
+        z.kk_vol_l += menge
+        z.kk_extrakt_kg += extrakt
+        z.k_vol_l -= menge
+        z.k_extrakt_kg -= extrakt
 
     def _wasser(self, dt, a):
         z = self.z
@@ -444,7 +516,10 @@ class Welt:
         c = self._kessel_kap()
         z.heizleistung_w = heiz * p.heizleistung_w
         leistung = heiz * p.heizleistung_w - p.kessel_verlust_w_k * (z.k_temp - p.raum_c)
-        if a.kuehlwasser > 0 and z.k_vol_l > 0:
+        # (die Leistung des Kochers kommt in _kocher dazu)
+        # Der Wuerzekuehler haengt am Gefaess mit der Wuerze: beim Zwei-Geraete-Aufbau
+        # am Kocher, beim BIAB an der Pfanne.
+        if a.kuehlwasser > 0 and z.k_vol_l > 0 and z.kk_vol_l <= 0:
             leistung -= a.kuehlwasser * p.kuehler_w_k * (z.k_temp - p.kuehlwasser_c)
         z.k_temp += leistung * dt / c
         if not trocken and z.k_vol_l > 0 and z.k_temp > p.siedepunkt_c:
@@ -458,6 +533,23 @@ class Welt:
             z.k_extrakt_pot_kg -= menge
             z.k_extrakt_kg += menge
         z.k_fuehler += (z.k_temp - z.k_fuehler) * (1.0 - math.exp(-dt / KESSEL_TRAEGHEIT_S))
+
+    def _kocher(self, dt, a):
+        """Wuerzekocher: wie die Pfanne, aber ohne Maische. Heizt, kocht, verdampft
+        und nimmt den Wuerzekuehler, sobald Wuerze drin steht."""
+        z, p = self.z, self.p
+        heiz = 1.0 if self.aktiv("heizung_klebt") else max(0.0, min(1.0, a.heizung_kocher))
+        c = (z.kk_vol_l + z.kk_extrakt_kg) * CP_WASSER + 3000.0
+        leistung = heiz * p.heizleistung_w - p.kessel_verlust_w_k * (z.kk_temp - p.raum_c)
+        if a.kuehlwasser > 0 and z.kk_vol_l > 0:
+            leistung -= a.kuehlwasser * p.kuehler_w_k * (z.kk_temp - p.kuehlwasser_c)
+        z.kk_temp += leistung * dt / c
+        if z.kk_vol_l > 0 and z.kk_temp > p.siedepunkt_c:
+            kg = (z.kk_temp - p.siedepunkt_c) * c / VERDAMPFUNG
+            z.kk_vol_l = max(0.0, z.kk_vol_l - kg)
+            z.kk_temp = p.siedepunkt_c
+        z.kk_fuehler += (z.kk_temp - z.kk_fuehler) * (1.0 - math.exp(-dt / KESSEL_TRAEGHEIT_S))
+        z.heizleistung_w += heiz * p.heizleistung_w
 
     def _gaertank(self, dt, a):
         z, p = self.z, self.p

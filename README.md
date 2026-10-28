@@ -54,11 +54,45 @@ python3 stoerfaelle.py --url http://127.0.0.1:8000 --log ~/cbpi4/logs/cbpi.log
 
 **Sicherheit:** Die Simulation in einer **eigenen cbpi-Instanz** betreiben (eigener Konfigordner, nur an 127.0.0.1),
 nicht im cbpi, das die echte Brauerei steuert. Das Anlegen bricht ab, wenn es einen gleichnamigen *nicht*
-simulierten Aktor oder Fühler findet, und die simulierten Aktoren liegen auf GPIOs, die der HAT nicht belegt
-(5, 7, 8, 12, 14, 15, 23, 24, 25; Stand Platine Biersteuerung f5a2bcf), damit
-`SicherAktor` keinen doppelten GPIO meldet – trotzdem ersetzt „Simulation anlegen“ den Maischplan von cbpi.
-Mit dem Dampfkondensator sind diese neun Pins **vollständig vergeben**: Ein weiterer simulierter Aktor braucht
-erst einen frei gewordenen.
+simulierten Aktor oder Fühler findet – trotzdem ersetzt „Simulation anlegen“ den Maischplan von cbpi.
+
+**Die simulierten Aktoren liegen auf denselben GPIOs wie die echte Anlage.** Früher wichen sie auf freie Pins
+aus; seit die Platine jeden GPIO von 2 bis 27 führt, gibt es keine freien mehr. Das ist unbedenklich, weil alle
+Teile mit `Simulation = Ja` laufen und keinen GPIO anfassen – und weil die Simulation ohnehin in einer eigenen
+Instanz lebt. Ändert sich die Platine, `AKTOREN` und `WASSERVENTIL` in `einrichtung.py` nachziehen.
+
+| Aktor | GPIO | auf der Platine |
+|---|---|---|
+| Maischepfanne | 27 | Relais J4 |
+| Würzekocher | 21 | Relais J15 |
+| Pumpe | 22 | Relais J16 |
+| Rührwerk | 18 | Relais J7 |
+| Kühlschrank (Gärschrank kühlen) | 19 | Relais J13 |
+| Gärschrank Heizung | 20 | Relais J8 |
+| Kühlwasser (Kühlspirale) | 10 | Ventil 6, J20 |
+| Dampfkondensator | 11 | Ventil 7, J20 |
+| Spundventil | 16 | Ventil 1, J17 |
+| CO₂-Ventil | 17 | Ventil 2, J17 |
+| Wegeventil Maischebottich | 23 | Ventil 8, J22 |
+| Wegeventil Kochkessel | 24 | Ventil 9, J22 |
+| Wasserventil | 9 (+ Durchfluss 6) | Ventil 5 J20, YF-S201 J19 |
+
+## Zwei Gefäße, Pumpe und Wegeventile
+
+Gemaischt wird in der **Maischepfanne**, gekocht im **Würzekocher** – beide mit eigener Heizung, eigenem Fühler
+und eigener Kessellogik. Dazwischen schiebt die Pumpe über das Wegeventil Richtung Kochkessel um.
+
+Die Pumpe läuft **in Echtzeit**, nicht im Zeitraffer – wie Wasser und Gas, weil hier Mengen in Minuten fließen.
+Bei 12 L/min dauert das Umpumpen von 24 L rund zwei Minuten, unabhängig vom eingestellten Zeitraffer.
+
+| Wegeventil | Wirkung |
+|---|---|
+| Richtung Kochkessel offen | die Würze wandert hinüber, Extrakt anteilig mit |
+| Richtung Maischebottich offen | sie läuft im Kreis (Läutern), die Mengen ändern sich nicht |
+| beide zu | die Pumpe fördert gegen geschlossene Ventile, nichts fließt |
+
+Im Maischplan steht die Reihenfolge fest: **erst das Ventil öffnen, dann die Pumpe** – und am Ende erst die
+Pumpe aus, dann das Ventil. Nie andersherum, sonst fördert sie gegen einen geschlossenen Weg.
 
 ## Rührwerk und Dampfkondensator laufen über Rezeptschritte
 
